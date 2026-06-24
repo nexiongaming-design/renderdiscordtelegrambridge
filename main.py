@@ -12,8 +12,11 @@ import aiofiles
 from aiohttp import web
 
 async def handle_health(request):
-    # This assumes index.html is in the same folder as main.py
-    async with aiofiles.open('index.html', mode='r') as f:
+    # Get the folder where main.py is located
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(base_dir, 'index.html')
+    
+    async with aiofiles.open(file_path, mode='r') as f:
         content = await f.read()
     return web.Response(text=content, content_type='text/html')
 
@@ -132,84 +135,77 @@ async def on_ready():
 @discord_bot.event 
 async def on_message(message): 
     global TELEGRAM_GROUP_ID
-    # FIX: Ignore messages sent by this bot, other bots, or external translator webhooks
+    
+    # 1. Ignore messages sent by any bot (prevents infinite loops)
     if message.author.bot:
         return
+    
+    # 2. Only process if the channel is one we monitor
+    if message.channel.id not in ALL_MONITORED_DISCORD_CHANNELS:
+        return
+        
+    # 3. Find the category configuration
+    matched_category = None
+    for cat_name, config in CATEGORIES.items():
+        if message.channel.id in config["listen_channels"]:
+            matched_category = config
+            break
 
-    if "(via TG)" in message.content:
+    if not matched_category:
         return
 
-    for embed in message.embeds:
-        if embed.description and "(via TG)" in embed.description:
-            return
-        if embed.title and "(via TG)" in embed.title:
-            return
-        for field in embed.fields:
-            if "(via TG)" in field.value:
-                return
+    print(f"--- DISCORD DEBUG --- Match Found! Relaying from channel {message.channel.id} to Telegram Topic {matched_category['telegram_topic_id']}") 
 
-    if message.channel.id in ALL_MONITORED_DISCORD_CHANNELS: 
-        
-        matched_category = None
-        for cat_name, config in CATEGORIES.items():
-            if message.channel.id in config["listen_channels"]:
-                matched_category = config
-                break
+    sender_name = message.author.display_name 
+    target_topic = matched_category["telegram_topic_id"]
+    
+    dynamic_content = message.content or ""
+    
+    # Handle Embeds (if any)
+    if message.embeds:
+        for embed in message.embeds:
+            embed_parts = []
+            if embed.title:
+                embed_parts.append(f"=== {embed.title.upper()} ===")
+            if embed.description:
+                embed_parts.append(embed.description)
+            for field in embed.fields:
+                embed_parts.append(f"• {field.name}:\n{field.value}")
+            
+            if embed_parts:
+                joined_embed_str = "\n\n".join(embed_parts)
+                if dynamic_content:
+                    dynamic_content += "\n\n" + joined_embed_str
+                else:
+                    dynamic_content = joined_embed_str
 
-        if not matched_category:
-            return
+    formatted_text = f"{sender_name}:\n\n{dynamic_content}"
 
-        print(f"--- DISCORD DEBUG --- Match Found! Relaying from channel {message.channel.id} to Telegram Topic {matched_category['telegram_topic_id']}") 
-
-        sender_name = message.author.display_name 
-        target_topic = matched_category["telegram_topic_id"]
-         
-        dynamic_content = message.content or ""
-        
-        if message.embeds:
-            for embed in message.embeds:
-                embed_parts = []
-                if embed.title:
-                    embed_parts.append(f"=== {embed.title.upper()} ===")
-                if embed.description:
-                    embed_parts.append(embed.description)
-                for field in embed.fields:
-                    embed_parts.append(f"• {field.name}:\n{field.value}")
+    try: 
+        if message.attachments: 
+            attachment = message.attachments[0] 
+            if attachment.filename.lower().endswith(('png', 'jpg', 'jpeg', 'webp')): 
+                image_bytes = await attachment.read() 
                 
-                if embed_parts:
-                    joined_embed_str = "\n\n".join(embed_parts)
-                    if dynamic_content:
-                        dynamic_content += "\n\n" + joined_embed_str
-                    else:
-                        dynamic_content = joined_embed_str
-
-        formatted_text = f"{sender_name}:\n\n{dynamic_content}"
-
-        try: 
-            if message.attachments: 
-                attachment = message.attachments[0] 
-                if attachment.filename.lower().endswith(('png', 'jpg', 'jpeg', 'webp')): 
-                    image_bytes = await attachment.read() 
-                     
-                    tg_msg = await tg_bot_sender.send_photo( 
-                        chat_id=TELEGRAM_GROUP_ID, 
-                        photo=image_bytes, 
-                        caption=formatted_text if dynamic_content else f"{sender_name}:", 
-                        message_thread_id=target_topic if target_topic != 0 else None 
-                    ) 
-                    save_message_pair(message.id, tg_msg.message_id, is_photo=True)
-                    return  
-
-            if dynamic_content: 
-                tg_msg = await tg_bot_sender.send_message( 
+                tg_msg = await tg_bot_sender.send_photo( 
                     chat_id=TELEGRAM_GROUP_ID, 
-                    text=formatted_text, 
+                    photo=image_bytes, 
+                    caption=formatted_text if dynamic_content else f"{sender_name}:", 
                     message_thread_id=target_topic if target_topic != 0 else None 
                 ) 
-                save_message_pair(message.id, tg_msg.message_id, is_photo=False)
-                  
-        except Exception as e: 
-            print(f"CRITICAL ERROR forwarding to Telegram: {e}") 
+                save_message_pair(message.id, tg_msg.message_id, is_photo=True)
+                return  
+
+        if dynamic_content: 
+            tg_msg = await tg_bot_sender.send_message( 
+                chat_id=TELEGRAM_GROUP_ID, 
+                text=formatted_text, 
+                message_thread_id=target_topic if target_topic != 0 else None 
+            ) 
+            save_message_pair(message.id, tg_msg.message_id, is_photo=False)
+            
+    except Exception as e: 
+        print(f"CRITICAL ERROR forwarding to Telegram: {e}")
 
 
 @discord_bot.event
@@ -246,18 +242,6 @@ async def on_raw_message_edit(payload):
                 new_content = payload.cached_message.content
             else:
                 return
-
-        if "(via TG)" in new_content:
-            return
-
-        embeds = payload.data.get('embeds', [])
-        for embed_data in embeds:
-            if isinstance(embed_data, dict):
-                if "(via TG)" in embed_data.get('description', '') or "(via TG)" in embed_data.get('title', ''):
-                    return
-                for field in embed_data.get('fields', []):
-                    if "(via TG)" in field.get('value', ''):
-                        return
 
         display_name = author_data.get('global_name') or author_data.get('username')
         
@@ -330,7 +314,7 @@ async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT
         tg_file = await context.bot.get_file(photo.file_id) 
         byte_array = await tg_file.download_as_bytearray() 
 
-    original_discord_text = f"**{sender_name} (via TG)**" 
+    original_discord_text = f"**{sender_name}**" 
     if text_content: 
         original_discord_text += f"\n\n{text_content}" 
 
