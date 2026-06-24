@@ -89,6 +89,7 @@ ALL_MONITORED_DISCORD_CHANNELS = list(set(ALL_MONITORED_DISCORD_CHANNELS))
 
 # Global Telegram Sender Handler
 tg_bot_sender = None 
+TELEGRAM_GROUP_ID = 0
 
 # --- MESSAGE DELETION & EDIT SYSTEM CACHE ---
 MAX_MAP_SIZE = 10000 
@@ -126,6 +127,7 @@ async def on_ready():
 
 @discord_bot.event 
 async def on_message(message): 
+    global TELEGRAM_GROUP_ID
     # FIX: Ignore messages sent by this bot, other bots, or external translator webhooks
     if message.author.bot:
         return
@@ -381,17 +383,18 @@ async def main():
     # 1. Clean and extract tokens from the environment safely first
     discord_token = clean_token("DISCORD_TOKEN")
     telegram_token = clean_token("TELEGRAM_TOKEN")
-    telegram_group_id = safe_int("TELEGRAM_GROUP_ID", default=0)
+    global TELEGRAM_GROUP_ID
+    TELEGRAM_GROUP_ID = safe_int("TELEGRAM_GROUP_ID", default=0)
     
     # 2. Pre-flight logging check (Now using the variables we just created!)
     print("=== ENVIRONMENT DIAGNOSTICS ===")
     print(f"DISCORD_TOKEN loaded? {'YES' if discord_token else 'NO'} (Length: {len(discord_token) if discord_token else 0})")
     print(f"TELEGRAM_TOKEN loaded? {'YES' if telegram_token else 'NO'} (Length: {len(telegram_token) if telegram_token else 0})")
-    print(f"TELEGRAM_GROUP_ID: {telegram_group_id}")
+    print(f"TELEGRAM_GROUP_ID: {TELEGRAM_GROUP_ID}")
     print("===============================")
      
-    if not discord_token or not telegram_token or telegram_group_id == 0:
-        print("CRITICAL: Missing core token configurations or group ID. Halting connection engine initialization.")
+    if not discord_token or not telegram_token or TELEGRAM_GROUP_ID == 0:
+        print("CRITICAL: Missing core token configurations or group ID...")
         return
 
     tg_app = ( 
@@ -406,7 +409,7 @@ async def main():
 
     tg_bot_sender = tg_app.bot  
 
-    tg_msg_filter = filters.Chat(telegram_group_id) & (filters.TEXT | filters.PHOTO | filters.UpdateType.EDITED_MESSAGE)
+    tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO | filters.UpdateType.EDITED_MESSAGE)
     tg_app.add_handler(MessageHandler(tg_msg_filter, telegram_receive_handler)) 
 
     print("Starting Telegram Connection Module...") 
