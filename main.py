@@ -134,15 +134,15 @@ async def on_ready():
 async def on_message(message): 
     global TELEGRAM_GROUP_ID
     
-    # 1. LOOP PREVENTIE: Negeer berichten van iTranslator webhooks
-    # We kijken of het een webhook is én of "iTranslator" in de naam voorkomt.
-    if message.webhook_id:
-        # Als de webhook naam iTranslator bevat, stoppen we direct.
-        # Je kunt "iTranslator" vervangen door de exacte naam die je in Discord ziet.
-        if message.author.name and "iTranslator" in message.author.name:
-            return
+    # 1. LOOP PREVENTIE: 
+    # Als het een webhook is (iTranslator) én het heeft een embed (wat vertaalbots doen),
+    # negeer het dan volledig. Dit is de meest veilige methode zonder watermerk.
+    if message.webhook_id and message.embeds:
+        # Optioneel: voeg hier een print toe om te zien wat hij blokkeert in je console
+        # print(f"--- LOOP PREVENTIE --- Webhook met embed gedetecteerd, genegeerd.")
+        return
 
-    # 2. Ignore andere normale bots (behalve webhooks, die hebben we hierboven al gefilterd)
+    # 2. Ignore normale bots (die geen webhooks zijn)
     if message.author.bot and not message.webhook_id:
         return
     
