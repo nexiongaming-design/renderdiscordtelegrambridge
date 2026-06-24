@@ -358,7 +358,26 @@ async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # This is a manual trigger you can type in Telegram to clear old stuff
     await update.message.reply_text("Sync initiated: Please ensure channels are manually aligned.")
 
-
+async def telegram_delete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Telegram stuurt een bericht naar de bot wanneer een bericht verwijderd is
+    # We halen het ID van het verwijderde bericht op
+    deleted_id = update.message.message_id 
+    
+    if deleted_id in TELEGRAM_TO_DISCORD_MAP:
+        discord_msg_id = TELEGRAM_TO_DISCORD_MAP.pop(deleted_id)
+        print(f"--- SYNC DELETION --- Telegram message {deleted_id} deleted. Striking from Discord...")
+        
+        # Zoek in welke categorie dit bericht hoorde om het juiste Discord kanaal te vinden
+        for cat in CATEGORIES.values():
+            channel = discord_bot.get_channel(cat["source_channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(discord_msg_id)
+                    await msg.delete()
+                    print("--- SYNC DELETION SUCCESS --- Message removed from Discord.")
+                except Exception as e:
+                    print(f"Error removing from Discord: {e}")
+                    
 # --- INTEGRATED RUNNER --- 
 
 async def main(): 
@@ -403,11 +422,15 @@ async def main():
 
     tg_bot_sender = tg_app.bot  
 
-    # -> FIX IMPLEMENTED HERE: Added the sync command handler <-
+# Voeg dit toe onder je huidige handlers:
     tg_app.add_handler(CommandHandler("sync", sync_command))
 
+    # Voor gewone berichten en edits:
     tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO | filters.UpdateType.EDITED_MESSAGE)
     tg_app.add_handler(MessageHandler(tg_msg_filter, telegram_receive_handler)) 
+
+    # VOEG DIT TOE: Specifieke handler voor verwijderde berichten
+    tg_app.add_handler(MessageHandler(filters.Chat(TELEGRAM_GROUP_ID) & filters.UpdateType.DELETED_MESSAGE, telegram_delete_handler))
 
     print("Starting Telegram Connection Module...") 
     await tg_app.initialize() 
