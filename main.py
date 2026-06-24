@@ -378,20 +378,25 @@ async def main():
     await site.start()
     print(f"Web health check server successfully bound to port {port}")
     
-    # Pre-flight logging check
+    # 1. Clean and extract tokens from the environment safely first
+    discord_token = clean_token("DISCORD_TOKEN")
+    telegram_token = clean_token("TELEGRAM_TOKEN")
+    telegram_group_id = safe_int("TELEGRAM_GROUP_ID", default=0)
+    
+    # 2. Pre-flight logging check (Now using the variables we just created!)
     print("=== ENVIRONMENT DIAGNOSTICS ===")
-    print(f"DISCORD_TOKEN loaded? {'YES' if DISCORD_TOKEN else 'NO'} (Length: {len(DISCORD_TOKEN) if DISCORD_TOKEN else 0})")
-    print(f"TELEGRAM_TOKEN loaded? {'YES' if TELEGRAM_TOKEN else 'NO'} (Length: {len(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else 0})")
-    print(f"TELEGRAM_GROUP_ID: {TELEGRAM_GROUP_ID}")
+    print(f"DISCORD_TOKEN loaded? {'YES' if discord_token else 'NO'} (Length: {len(discord_token) if discord_token else 0})")
+    print(f"TELEGRAM_TOKEN loaded? {'YES' if telegram_token else 'NO'} (Length: {len(telegram_token) if telegram_token else 0})")
+    print(f"TELEGRAM_GROUP_ID: {telegram_group_id}")
     print("===============================")
      
-    if not DISCORD_TOKEN or not TELEGRAM_TOKEN:
-        print("CRITICAL: Missing core token configurations. Halting connection engine initialization.")
+    if not discord_token or not telegram_token or telegram_group_id == 0:
+        print("CRITICAL: Missing core token configurations or group ID. Halting connection engine initialization.")
         return
 
     tg_app = ( 
         ApplicationBuilder() 
-        .token(TELEGRAM_TOKEN) 
+        .token(telegram_token) 
         .connect_timeout(30.0) 
         .read_timeout(30.0) 
         .write_timeout(30.0) 
@@ -401,7 +406,7 @@ async def main():
 
     tg_bot_sender = tg_app.bot  
 
-    tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO | filters.UpdateType.EDITED_MESSAGE)
+    tg_msg_filter = filters.Chat(telegram_group_id) & (filters.TEXT | filters.PHOTO | filters.UpdateType.EDITED_MESSAGE)
     tg_app.add_handler(MessageHandler(tg_msg_filter, telegram_receive_handler)) 
 
     print("Starting Telegram Connection Module...") 
@@ -411,14 +416,14 @@ async def main():
 
     print("Starting Discord Gateway Core Connection...") 
     try: 
-        await discord_bot.start(DISCORD_TOKEN) 
+        await discord_bot.start(discord_token) 
     finally: 
         print("Shutting down bot connections gracefully...") 
         await site.stop()
         await tg_app.updater.stop() 
         await tg_app.start() 
         await tg_app.shutdown() 
-        await discord_bot.close() 
+        await discord_bot.close()
 
 if __name__ == '__main__': 
     try: 
