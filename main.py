@@ -23,27 +23,26 @@ def clean_token(env_var_name):
         return None
     return val.strip().replace('"', '').replace("'", "")
 
-# Defensive integer parser to prevent empty string crashes
+# Updated defensive integer parser to clean out trailing inline comments
 def safe_int(env_var_name, default=0):
     val = os.getenv(env_var_name, "").strip()
     if not val: 
         return default
+    # Split by '#' to remove any trailing comments on the line
+    val = val.split('#')[0].strip()
     try:
         return int(val)
     except ValueError:
         print(f"⚠️ WARNING: Environment variable '{env_var_name}' is not a valid integer. Defaulting to {default}.")
         return default
 
-# Base Secrets (Sanitized)
-DISCORD_TOKEN = clean_token("DISCORD_TOKEN") 
-TELEGRAM_TOKEN = clean_token("TELEGRAM_TOKEN") 
-TELEGRAM_GROUP_ID = safe_int("TELEGRAM_GROUP_ID", default=0)
-
-# Helper function to parse comma-separated strings into lists of integer IDs
+# Updated list parser to handle trailing inline comments safely
 def parse_inline_ids(env_var_name):
     val = os.getenv(env_var_name) 
     if not val: 
         return []
+    # Split by '#' to isolate the raw IDs from any comments
+    val = val.split('#')[0].strip()
     return [int(cid.strip()) for cid in val.split(",") if cid.strip().isdigit()]
 
 # --- ROUTING MATRIX CONFIGURATION --- 
@@ -61,7 +60,7 @@ CATEGORIES = {
     "schedule": {
         "listen_channels": parse_inline_ids("SCHEDULE_LISTEN_CHANNELS"),
         "source_channel_id": safe_int("SCHEDULE_SOURCE_CHANNEL_ID", default=0),
-        "telegram_topic_id": safe_int("SCHEDULE_TOPIC_ID", default=0)
+        "telegram_topic_id": safe_int("SCHEDULE_TELEGRAM_TOPIC_ID", default=0)
     },    
     "chat": {
          "listen_channels": parse_inline_ids("CHAT_LISTEN_CHANNELS"),
