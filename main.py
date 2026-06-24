@@ -14,11 +14,6 @@ from aiohttp import web
 async def handle_health(request):
     return web.Response(text="Bot connection matrix is online!")
 
-# --- 1. START THE DUMMY WEB SERVER --- 
-#from keep_alive import keep_alive 
-#keep_alive()  
-# ------------------------------------- 
-
 # Load secrets 
 load_dotenv() 
 
