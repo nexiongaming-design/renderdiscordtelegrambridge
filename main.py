@@ -421,7 +421,7 @@ async def main():
         print("Shutting down bot connections gracefully...") 
         await site.stop()
         await tg_app.updater.stop() 
-        await tg_app.start() 
+        await tg_app.stop() 
         await tg_app.shutdown() 
         await discord_bot.close()
 
