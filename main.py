@@ -390,7 +390,7 @@ async def main():
 
     tg_bot_sender = tg_app.bot  
 
-    tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO) 
+    tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO | filters.UpdateType.EDITED_MESSAGE)
     tg_app.add_handler(MessageHandler(tg_msg_filter, telegram_receive_handler)) 
 
     print("Starting Telegram Connection Module...") 
