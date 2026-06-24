@@ -6,12 +6,16 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filte
 from dotenv import load_dotenv 
 import asyncio 
 import io 
+import aiofiles
 
 # Web health check server imports
 from aiohttp import web
 
 async def handle_health(request):
-    return web.Response(text="Bot connection matrix is online!")
+    # This assumes index.html is in the same folder as main.py
+    async with aiofiles.open('index.html', mode='r') as f:
+        content = await f.read()
+    return web.Response(text=content, content_type='text/html')
 
 # Load secrets 
 load_dotenv() 
@@ -376,7 +380,7 @@ async def main():
     app.router.add_get('/', handle_health)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
+    site = web.TCPSite(runner, '0.0.0.0', port, reuse_address=True) 
     await site.start()
     print(f"Web health check server successfully bound to port {port}")
     
