@@ -63,8 +63,29 @@ CATEGORIES = {
         "listen_channels": parse_inline_ids("SCHEDULE_LISTEN_CHANNELS"),
         "source_channel_id": safe_int("SCHEDULE_SOURCE_CHANNEL_ID", default=0),
         "telegram_topic_id": safe_int("SCHEDULE_TOPIC_ID", default=0)
-    }
+    },
+    
+    # --- PRE-STAGED FUTURES (Uncomment lines below to activate) ---
+    
+    "chat": {
+         "listen_channels": parse_inline_ids("CHAT_LISTEN_CHANNELS"),
+         "source_channel_id": safe_int("CHAT_SOURCE_CHANNEL_ID", default=0),
+         "telegram_topic_id": safe_int("CHAT_TELEGRAM_TOPIC_ID", default=0)
+     },
+    
+    "polls": {
+         "listen_channels": parse_inline_ids("POLLS_LISTEN_CHANNELS"),
+         "source_channel_id": safe_int("POLLS_SOURCE_CHANNEL_ID", default=0),
+         "telegram_topic_id": safe_int("POLLS_TELEGRAM_TOPIC_ID", default=0)
+     },
+    
+     "absence": {
+         "listen_channels": parse_inline_ids("ABSENCE_LISTEN_CHANNELS"),
+         "source_channel_id": safe_int("ABSENCE_SOURCE_CHANNEL_ID", default=0),
+         "telegram_topic_id": safe_int("ABSENCE_TELEGRAM_TOPIC_ID", default=0)
+     }
 }
+
 
 # Compile a flat list of all monitored Discord language channels for rapid lookups
 ALL_MONITORED_DISCORD_CHANNELS = []
