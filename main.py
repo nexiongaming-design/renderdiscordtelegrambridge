@@ -265,7 +265,7 @@ async def on_raw_message_edit(payload):
 
         formatted_text = f"{display_name}:\n\n{new_content}"
 
-        try:
+try:
             if is_photo:
                 await tg_bot_sender.edit_message_caption(
                     chat_id=TELEGRAM_GROUP_ID,
@@ -278,4 +278,9 @@ async def on_raw_message_edit(payload):
                     message_id=telegram_msg_id,
                     text=formatted_text
                 )
+            # Deze print moet op exact hetzelfde niveau staan als de 'if' en 'else' hierboven
             print(f"--- SYNC EDIT SUCCESS --- Updated Telegram target message ID: {telegram_msg_id}")
+            
+        except Exception as e:
+            # De 'except' moet op exact hetzelfde niveau staan als de 'try' hierboven
+            print(f"Error executing synchronized message edit on Telegram: {e}")
