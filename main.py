@@ -134,16 +134,14 @@ async def on_ready():
 async def on_message(message): 
     global TELEGRAM_GROUP_ID
     
-    # 1. LOOP PREVENTIE: 
-    # Als het een webhook is (iTranslator) én het heeft een embed (wat vertaalbots doen),
-    # negeer het dan volledig. Dit is de meest veilige methode zonder watermerk.
-    if message.webhook_id and message.embeds:
-        # Optioneel: voeg hier een print toe om te zien wat hij blokkeert in je console
-        # print(f"--- LOOP PREVENTIE --- Webhook met embed gedetecteerd, genegeerd.")
+    # 1. HET ULTIEME FILTER: 
+    # Als dit bericht door een webhook is gepost, negeer het.
+    # Dit stopt iTranslator onmiddellijk, omdat die bot ALTIJD webhooks gebruikt.
+    if message.webhook_id:
         return
 
-    # 2. Ignore normale bots (die geen webhooks zijn)
-    if message.author.bot and not message.webhook_id:
+    # 2. Ignore andere bots (die geen webhooks zijn)
+    if message.author.bot:
         return
     
     # 3. Only process if the channel is one we monitor
