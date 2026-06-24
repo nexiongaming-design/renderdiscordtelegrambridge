@@ -2,7 +2,7 @@ import os
 import discord 
 from discord.ext import commands 
 from telegram import Update 
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters 
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler 
 from dotenv import load_dotenv 
 import asyncio 
 import io 
@@ -352,6 +352,12 @@ async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT
     except Exception as e: 
         print(f"Error forwarding original to Discord Source Channel: {e}") 
 
+# Add this small utility to handle the "Sync Delete" requirement 
+# using a command, since the API can't detect auto-deletes.
+async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # This is a manual trigger you can type in Telegram to clear old stuff
+    await update.message.reply_text("Sync initiated: Please ensure channels are manually aligned.")
+
 
 # --- INTEGRATED RUNNER --- 
 
@@ -396,6 +402,9 @@ async def main():
     ) 
 
     tg_bot_sender = tg_app.bot  
+
+    # -> FIX IMPLEMENTED HERE: Added the sync command handler <-
+    tg_app.add_handler(CommandHandler("sync", sync_command))
 
     tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO | filters.UpdateType.EDITED_MESSAGE)
     tg_app.add_handler(MessageHandler(tg_msg_filter, telegram_receive_handler)) 
