@@ -134,15 +134,23 @@ async def on_ready():
 async def on_message(message): 
     global TELEGRAM_GROUP_ID
     
-    # 1. Ignore normal bots, BUT ALLOW WEBHOOKS (crucial for translation routing)
+    # 1. LOOP PREVENTIE: Negeer berichten van iTranslator webhooks
+    # We kijken of het een webhook is én of "iTranslator" in de naam voorkomt.
+    if message.webhook_id:
+        # Als de webhook naam iTranslator bevat, stoppen we direct.
+        # Je kunt "iTranslator" vervangen door de exacte naam die je in Discord ziet.
+        if message.author.name and "iTranslator" in message.author.name:
+            return
+
+    # 2. Ignore andere normale bots (behalve webhooks, die hebben we hierboven al gefilterd)
     if message.author.bot and not message.webhook_id:
         return
     
-    # 2. Only process if the channel is one we monitor
+    # 3. Only process if the channel is one we monitor
     if message.channel.id not in ALL_MONITORED_DISCORD_CHANNELS:
         return
         
-    # 3. Find the category configuration
+    # 4. Find the category configuration
     matched_category = None
     for cat_name, config in CATEGORIES.items():
         if message.channel.id in config["listen_channels"]:
