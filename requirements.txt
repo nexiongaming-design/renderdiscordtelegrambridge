@@ -1,0 +1,4 @@
+discord.py
+python-telegram-bot
+python-dotenv
+aiohttp
