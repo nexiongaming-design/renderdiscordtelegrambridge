@@ -7,10 +7,9 @@ from dotenv import load_dotenv
 import asyncio 
 import io 
 
-# 1. ADD THIS NEW IMPORT AT THE TOP OF YOUR FILE
+# Web health check server imports
 from aiohttp import web
 
-# 2. ADD THIS HEALTH CHECK HANDLER FUNCTION
 async def handle_health(request):
     return web.Response(text="Bot connection matrix is online!")
 
@@ -83,7 +82,6 @@ CATEGORIES = {
      }
 }
 
-
 # Compile a flat list of all monitored Discord language channels for rapid lookups
 ALL_MONITORED_DISCORD_CHANNELS = []
 for cat_data in CATEGORIES.values():
@@ -121,10 +119,6 @@ discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 @discord_bot.event 
 async def on_ready(): 
-    #from keep_alive import bot_status 
-    #bot_status["discord_online"] = True 
-   # bot_status["telegram_online"] = True  
-
     print(f'Logged in to Discord successfully as: {discord_bot.user.name}') 
     print(f'Total language channels monitored across all categories: {len(ALL_MONITORED_DISCORD_CHANNELS)}')
     for cat_name, mapping in CATEGORIES.items():
@@ -133,7 +127,8 @@ async def on_ready():
 
 @discord_bot.event 
 async def on_message(message): 
-    if message.author.id == discord_bot.user.id:
+    # FIX: Ignore messages sent by this bot, other bots, or external translator webhooks
+    if message.author.bot:
         return
 
     if "(via TG)" in message.content:
@@ -231,6 +226,11 @@ async def on_raw_message_delete(payload):
 
 @discord_bot.event
 async def on_raw_message_edit(payload):
+    # FIX: Ignore raw payload changes initiated by translator bots or system bots
+    author_data = payload.data.get('author', {})
+    if author_data.get('bot'):
+        return
+
     if payload.message_id in DISCORD_TO_TELEGRAM_MAP:
         telegram_msg_id, is_photo = DISCORD_TO_TELEGRAM_MAP[payload.message_id]
         
@@ -254,7 +254,6 @@ async def on_raw_message_edit(payload):
                     if "(via TG)" in field.get('value', ''):
                         return
 
-        author_data = payload.data.get('author', {})
         display_name = author_data.get('global_name') or author_data.get('username')
         
         if not display_name and payload.cached_message:
@@ -370,7 +369,7 @@ async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT
 async def main(): 
     global tg_bot_sender 
 
-  # 3. INSERT THE WEB SERVER HERE (Right at the start of main)
+    # Web Server Startup
     port = int(os.getenv("PORT", 8080))
     app = web.Application()
     app.router.add_get('/', handle_health)
@@ -416,10 +415,9 @@ async def main():
         await discord_bot.start(DISCORD_TOKEN) 
     finally: 
         print("Shutting down bot connections gracefully...") 
-      # 4. CLEAN UP THE WEB SERVER ON SHUTDOWN
         await site.stop()
         await tg_app.updater.stop() 
-        await tg_app.stop() 
+        await tg_app.start() 
         await tg_app.shutdown() 
         await discord_bot.close() 
 
