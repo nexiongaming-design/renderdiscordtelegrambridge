@@ -126,7 +126,7 @@ discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 @discord_bot.event 
 async def on_ready(): 
-    print(f'Logged in to Discord successfully as: {discord_bot.user.name}') 
+    print(f'Logged in to Discord successfully as: {discord_bot.user.name} - VERSIE 2.0') 
     print(f'Total language channels monitored across all categories: {len(ALL_MONITORED_DISCORD_CHANNELS)}')
     for cat_name, mapping in CATEGORIES.items():
         print(f" -> Matrix Active [{cat_name.upper()}]: Listening to {len(mapping['listen_channels'])} channels | Routing to Topic ID: {mapping['telegram_topic_id']}")
