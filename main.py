@@ -134,54 +134,31 @@ async def on_ready():
 async def on_message(message): 
     global TELEGRAM_GROUP_ID
     
-    # 1. HET ULTIEME FILTER: 
-    # Als dit bericht door een webhook is gepost, negeer het.
-    # Dit stopt iTranslator onmiddellijk, omdat die bot ALTIJD webhooks gebruikt.
+    # --- LOOP PREVENTIE ---
+    # Blokkeer ELKE webhook (iTranslator is een webhook).
+    # Jouw eigen bot verstuurt berichten als 'Bot', niet als 'Webhook'.
     if message.webhook_id:
         return
 
-    # 2. Ignore andere bots (die geen webhooks zijn)
+    # Ignore andere normale bots
     if message.author.bot:
         return
     
-    # 3. Only process if the channel is one we monitor
+    # Only process if the channel is one we monitor
     if message.channel.id not in ALL_MONITORED_DISCORD_CHANNELS:
         return
         
-    # 4. Find the category configuration
-    matched_category = None
-    for cat_name, config in CATEGORIES.items():
-        if message.channel.id in config["listen_channels"]:
-            matched_category = config
-            break
-
+    matched_category = next((c for c in CATEGORIES.values() if message.channel.id in c["listen_channels"]), None)
     if not matched_category:
         return
 
-    print(f"--- DISCORD DEBUG --- Match Found! Relaying from channel {message.channel.id} to Telegram Topic {matched_category['telegram_topic_id']}") 
-
     sender_name = message.author.display_name 
-    target_topic = matched_category["telegram_topic_id"]
-    
     dynamic_content = message.content or ""
     
-    # Handle Embeds (if any)
+    # Handle Embeds voor de zekerheid
     if message.embeds:
         for embed in message.embeds:
-            embed_parts = []
-            if embed.title:
-                embed_parts.append(f"=== {embed.title.upper()} ===")
-            if embed.description:
-                embed_parts.append(embed.description)
-            for field in embed.fields:
-                embed_parts.append(f"• {field.name}:\n{field.value}")
-            
-            if embed_parts:
-                joined_embed_str = "\n\n".join(embed_parts)
-                if dynamic_content:
-                    dynamic_content += "\n\n" + joined_embed_str
-                else:
-                    dynamic_content = joined_embed_str
+            if embed.description: dynamic_content += f"\n\n{embed.description}"
 
     formatted_text = f"{sender_name}:\n\n{dynamic_content}"
 
@@ -190,21 +167,20 @@ async def on_message(message):
             attachment = message.attachments[0] 
             if attachment.filename.lower().endswith(('png', 'jpg', 'jpeg', 'webp')): 
                 image_bytes = await attachment.read() 
-                
-                tg_msg = await tg_bot_sender.send_photo( 
+                tg_msg = await tg_bot_sender.send_photo(
                     chat_id=TELEGRAM_GROUP_ID, 
                     photo=image_bytes, 
-                    caption=formatted_text if dynamic_content else f"{sender_name}:", 
-                    message_thread_id=target_topic if target_topic != 0 else None 
+                    caption=formatted_text, 
+                    message_thread_id=matched_category["telegram_topic_id"] or None
                 ) 
                 save_message_pair(message.id, tg_msg.message_id, is_photo=True)
-                return  
+                return 
 
         if dynamic_content: 
-            tg_msg = await tg_bot_sender.send_message( 
+            tg_msg = await tg_bot_sender.send_message(
                 chat_id=TELEGRAM_GROUP_ID, 
                 text=formatted_text, 
-                message_thread_id=target_topic if target_topic != 0 else None 
+                message_thread_id=matched_category["telegram_topic_id"] or None
             ) 
             save_message_pair(message.id, tg_msg.message_id, is_photo=False)
             
@@ -278,37 +254,27 @@ async def on_raw_message_edit(payload):
 
 async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): 
     message = update.effective_message 
-    if not message: 
-        return 
-
-    if message.from_user and message.from_user.is_bot: 
-        return 
+    
+    # --- EXTRA CHECKS ---
+    if not message or message.from_user is None:
+        return
+    if not message.text and not message.caption and not message.photo:
+        return
+    if message.from_user.is_bot:
+        return
 
     incoming_topic_id = message.message_thread_id or 0
+    matched_category = next((c for c in CATEGORIES.values() if c["telegram_topic_id"] == incoming_topic_id), None)
     
-    matched_category = None
-    for cat_name, config in CATEGORIES.items():
-        if config["telegram_topic_id"] == incoming_topic_id:
-            print(f"--- TELEGRAM DEBUG --- Message matched active lane routing definition: [{cat_name.upper()}]")
-            matched_category = config
-            break
-
     if not matched_category:
-        print(f"--- TELEGRAM DEBUG --- Received message from topic {incoming_topic_id}, but no channel matrix rule matches it. Ignoring.")
         return
 
     target_source_channel_id = matched_category["source_channel_id"]
-    if target_source_channel_id == 0:
-        print(f"Warning: Source Channel ID is unconfigured for topic {incoming_topic_id}.") 
-        return 
-
     target_channel = discord_bot.get_channel(target_source_channel_id) 
     if not target_channel: 
-        print(f"Warning: Discord Channel ID {target_source_channel_id} inaccessible or missing.") 
         return 
 
-    sender_user = update.effective_user 
-    sender_name = sender_user.first_name or sender_user.username 
+    sender_name = update.effective_user.first_name or update.effective_user.username 
     text_content = message.text or message.caption or "" 
     photo_content = message.photo 
 
@@ -322,39 +288,26 @@ async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT
     if text_content: 
         original_discord_text += f"\n\n{text_content}" 
 
-    # --- HANDLE EDITED TELEGRAM MESSAGES ---
+    # --- HANDLE EDITS & NEW MESSAGES (zoals in je oude code) ---
     is_edit = bool(update.edited_message)
     if is_edit:
         if message.message_id in TELEGRAM_TO_DISCORD_MAP:
             discord_msg_id = TELEGRAM_TO_DISCORD_MAP[message.message_id]
-            try:
-                print(f"--- TELEGRAM EDIT DETECTED --- Modifying matching Discord source message {discord_msg_id}...")
-                partial_msg = target_channel.get_partial_message(discord_msg_id)
-                await partial_msg.edit(content=original_discord_text)
-                print(f"--- TELEGRAM EDIT SUCCESS --- Source message updated.")
-            except Exception as e:
-                print(f"Error executing synced edit change on Discord: {e}")
-        else:
-            print(f"Telegram message {message.message_id} was edited, but it is not tracked in cache mapping memory.")
+            partial_msg = target_channel.get_partial_message(discord_msg_id)
+            await partial_msg.edit(content=original_discord_text)
         return
 
-    # --- HANDLE NEW TELEGRAM MESSAGES ---
-    print(f"--- TELEGRAM DEBUG --- Routing valid message from Topic {incoming_topic_id} directly to Discord Source Channel {target_source_channel_id}")
-
-    try: 
-        discord_msg = None
-        if byte_array: 
-            file_stream = io.BytesIO(byte_array) 
-            discord_file = discord.File(file_stream, filename="telegram_image.png") 
-            discord_msg = await target_channel.send(content=original_discord_text, file=discord_file) 
-        elif text_content: 
-            discord_msg = await target_channel.send(content=original_discord_text) 
-             
-        if discord_msg:
-            save_telegram_to_discord(message.message_id, discord_msg.id)
-            print(f"DEBUG: Successfully bridged message execution loop to target channel.") 
-    except Exception as e: 
-        print(f"Error forwarding original to Discord Source Channel: {e}") 
+    # --- SEND NEW ---
+    discord_msg = None
+    if byte_array: 
+        file_stream = io.BytesIO(byte_array) 
+        discord_file = discord.File(file_stream, filename="telegram_image.png") 
+        discord_msg = await target_channel.send(content=original_discord_text, file=discord_file) 
+    elif text_content: 
+        discord_msg = await target_channel.send(content=original_discord_text) 
+            
+    if discord_msg:
+        save_telegram_to_discord(message.message_id, discord_msg.id)
 
 async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Sync initiated: Please ensure channels are manually aligned.")
