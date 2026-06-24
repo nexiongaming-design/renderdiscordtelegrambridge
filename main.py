@@ -278,9 +278,7 @@ try:
                     message_id=telegram_msg_id,
                     text=formatted_text
                 )
-            # Deze print moet op exact hetzelfde niveau staan als de 'if' en 'else' hierboven
             print(f"--- SYNC EDIT SUCCESS --- Updated Telegram target message ID: {telegram_msg_id}")
             
         except Exception as e:
-            # De 'except' moet op exact hetzelfde niveau staan als de 'try' hierboven
             print(f"Error executing synchronized message edit on Telegram: {e}")
