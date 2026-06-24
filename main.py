@@ -63,10 +63,7 @@ CATEGORIES = {
         "listen_channels": parse_inline_ids("SCHEDULE_LISTEN_CHANNELS"),
         "source_channel_id": safe_int("SCHEDULE_SOURCE_CHANNEL_ID", default=0),
         "telegram_topic_id": safe_int("SCHEDULE_TOPIC_ID", default=0)
-    },
-    
-    # --- PRE-STAGED FUTURES (Uncomment lines below to activate) ---
-    
+    },    
     "chat": {
          "listen_channels": parse_inline_ids("CHAT_LISTEN_CHANNELS"),
          "source_channel_id": safe_int("CHAT_SOURCE_CHANNEL_ID", default=0),
