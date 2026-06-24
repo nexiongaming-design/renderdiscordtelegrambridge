@@ -171,7 +171,7 @@ async def on_message(message):
                     chat_id=TELEGRAM_GROUP_ID, 
                     photo=image_bytes, 
                     caption=formatted_text, 
-                    message_thread_id=matched_category["telegram_topic_id"] or None
+                    message_thread_id=matched_category["telegram_topic_id"] or None,
                     parse_mode=None
                 ) 
                 save_message_pair(message.id, tg_msg.message_id, is_photo=True)
@@ -181,7 +181,7 @@ async def on_message(message):
             tg_msg = await tg_bot_sender.send_message(
                 chat_id=TELEGRAM_GROUP_ID, 
                 text=formatted_text, 
-                message_thread_id=matched_category["telegram_topic_id"] or None
+                message_thread_id=matched_category["telegram_topic_id"] or None,
                 parse_mode=None
             ) 
             save_message_pair(message.id, tg_msg.message_id, is_photo=False)
