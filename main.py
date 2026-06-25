@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import asyncio
 import io
 import aiofiles
+import time
 
 # Web health check server imports
 from aiohttp import web
@@ -102,6 +103,10 @@ MAX_MAP_SIZE = 10000
 DISCORD_TO_TELEGRAM_MAP = {}
 TELEGRAM_TO_DISCORD_MAP = {}
 
+# Deduplication cache tracking high-speed cross-channel mirror activity
+# Format: { sender_display_name: (last_seen_channel_id, timestamp) }
+RECENT_POSTS = {}
+
 def save_message_pair(discord_id, telegram_id, is_photo=False):
     if len(DISCORD_TO_TELEGRAM_MAP) >= MAX_MAP_SIZE:
         oldest_key = next(iter(DISCORD_TO_TELEGRAM_MAP))
@@ -124,7 +129,7 @@ discord_bot = commands.Bot(command_prefix="!", intents=intents)
 
 @discord_bot.event 
 async def on_ready(): 
-    print(f'Logged in to Discord successfully as: {discord_bot.user.name} - VERSIE 2.0') 
+    print(f'Logged in to Discord successfully as: {discord_bot.user.name} - VERSIE 2.1') 
     print(f'Total language channels monitored across all categories: {len(ALL_MONITORED_DISCORD_CHANNELS)}')
     for cat_name, mapping in CATEGORIES.items():
         print(f" -> Matrix Active [{cat_name.upper()}]: Listening to {len(mapping['listen_channels'])} channels | Routing to Topic ID: {mapping['telegram_topic_id']}")
@@ -134,15 +139,23 @@ async def on_ready():
 async def on_message(message): 
     global TELEGRAM_GROUP_ID
     
-    # --- LOOP PREVENTIE ---
-    # Blokkeer ELKE webhook (iTranslator is een webhook).
-    # Jouw eigen bot verstuurt berichten als 'Bot', niet als 'Webhook'.
-    if message.webhook_id:
+    # --- LOOP & SELF-PREVENTION ---
+    # Block messages originating from this exact bot profile to prevent infinite feedback loops
+    if message.author.id == discord_bot.user.id:
         return
+        
+    # --- CROSS-CHANNEL TRANSLATION GUARD ---
+    # Captures automatic translation bots (like iTranslator webhooks/bots) that instantly 
+    # broadcast duplicates across separate language channels within a tiny time window.
+    current_time = time.time()
+    sender_name = message.author.display_name
 
-    # Ignore andere normale bots
-    if message.author.bot:
-        return
+    if sender_name in RECENT_POSTS:
+        last_channel_id, last_time = RECENT_POSTS[sender_name]
+        if message.channel.id != last_channel_id and (current_time - last_time) < 3.0:
+            return  # Drop multi-channel translation spam silently
+
+    RECENT_POSTS[sender_name] = (message.channel.id, current_time)
     
     # Only process if the channel is one we monitor
     if message.channel.id not in ALL_MONITORED_DISCORD_CHANNELS:
@@ -152,15 +165,20 @@ async def on_message(message):
     if not matched_category:
         return
 
-    sender_name = message.author.display_name 
     dynamic_content = message.content or ""
     
-    # Handle Embeds voor de zekerheid
+    # Comprehensive Embed Parsing (Crucial for Sesh, Survey Bot, and Poll Layouts)
     if message.embeds:
         for embed in message.embeds:
-            if embed.description: dynamic_content += f"\n\n{embed.description}"
+            if embed.title:
+                dynamic_content += f"\n**{embed.title}**"
+            if embed.description: 
+                dynamic_content += f"\n{embed.description}"
+            if embed.fields:
+                for field in embed.fields:
+                    dynamic_content += f"\n\n**{field.name}**:\n{field.value}"
 
-    formatted_text = f"{sender_name}:\n\n{dynamic_content}"
+    formatted_text = f"{sender_name}:\n\n{dynamic_content.strip()}"
 
     try: 
         if message.attachments: 
@@ -209,9 +227,10 @@ async def on_raw_message_delete(payload):
 
 @discord_bot.event
 async def on_raw_message_edit(payload):
-    # Allow webhook edits but block native bots
     author_data = payload.data.get('author', {})
-    if author_data.get('bot') and not payload.data.get('webhook_id'):
+    
+    # Prevent application loop issues caused by this bot editing things
+    if int(author_data.get('id', 0)) == discord_bot.user.id:
         return
 
     if payload.message_id in DISCORD_TO_TELEGRAM_MAP:
@@ -290,7 +309,7 @@ async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT
     if text_content: 
         original_discord_text += f"\n\n{text_content}" 
 
-    # --- HANDLE EDITS & NEW MESSAGES (zoals in je oude code) ---
+    # --- HANDLE EDITS & NEW MESSAGES ---
     is_edit = bool(update.edited_message)
     if is_edit:
         if message.message_id in TELEGRAM_TO_DISCORD_MAP:
