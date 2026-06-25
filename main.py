@@ -21,6 +21,35 @@ async def handle_health(request):
         content = await f.read()
     return web.Response(text=content, content_type='text/html')
 
+# Remote Control Endpoints
+async def handle_restart(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        os.system('sudo systemctl restart bot-bridge')
+        return web.Response(text="Bot is restarting...")
+    return web.Response(text="Unauthorized", status=403)
+
+async def handle_stop(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        os.system('sudo systemctl stop bot-bridge')
+        return web.Response(text="Bot stopped.")
+    return web.Response(text="Unauthorized", status=403)
+
+async def handle_update(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        # Assumes you have already set up 'git' in /home/dano/matrix-bridge/
+        os.system('cd /home/dano/matrix-bridge/ && git pull')
+        os.system('sudo systemctl restart bot-bridge')
+        return web.Response(text="Pulling latest code and restarting...")
+    return web.Response(text="Unauthorized", status=403)
+
+async def handle_logs(request):
+    # Reads the last 50 lines of the systemd journal
+    log_data = os.popen('journalctl -u bot-bridge.service -n 50 --no-pager').read()
+    return web.Response(text=log_data)
+
 # Load secrets
 load_dotenv()
 
@@ -342,6 +371,13 @@ async def main():
     port = int(os.getenv("PORT", 8080))
     app = web.Application()
     app.router.add_get('/', handle_health)
+    
+    # Registering Control Panel routes
+    app.router.add_get('/restart', handle_restart)
+    app.router.add_get('/stop', handle_stop)
+    app.router.add_get('/update', handle_update)
+    app.router.add_get('/logs', handle_logs)
+    
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port, reuse_address=True) 
@@ -395,6 +431,8 @@ async def main():
         print("Shutting down bot connections gracefully...") 
         await site.stop()
         await tg_app.updater.stop() 
+        await tg_app.start() # Safeguard structure alignment
+        await tg_app.updater.stop()
         await tg_app.stop() 
         await tg_app.shutdown() 
         await discord_bot.close()
