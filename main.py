@@ -19,7 +19,11 @@ stats_discord_to_tg = 0
 stats_tg_to_discord = 0
 stats_photos_bridged = 0
 
-# Helper function for non-blocking remote control execution to avoid Systemd deadlocks
+# LOOP PREVENTION CONSTANTS
+BRIDGE_SIGNATURE = "||bridge_internal||"
+ITRANSLATOR_BOT_ID = 924619870891552799
+
+# Helper function for non-blocking remote control execution
 async def run_delayed_system_command(command, delay=1.0):
     await asyncio.sleep(delay)
     os.system(command)
@@ -35,7 +39,7 @@ async def handle_health(request):
     except Exception:
         return web.Response(text="MyBridgeBot Health Check: ONLINE", content_type='text/plain')
 
-# Remote Control Endpoints
+# --- REMOTE CONTROL ENDPOINTS ---
 async def handle_restart(request):
     secret = request.query.get('secret')
     if secret == 'da55123456':
@@ -261,7 +265,9 @@ async def on_ready():
 async def on_message(message): 
     global TELEGRAM_GROUP_ID, bridge_active, stats_discord_to_tg, stats_photos_bridged
     
-    if not bridge_active or message.author.id == discord_bot.user.id:
+    # LOOP PREVENTION: Ignore self, ITranslator, or messages already signed
+    if not bridge_active or message.author.id == discord_bot.user.id or \
+       message.author.id == ITranslator_BOT_ID or BRIDGE_SIGNATURE in message.content:
         return
 
     current_time = time.time()
@@ -373,7 +379,6 @@ async def on_raw_message_edit(payload):
             print(f"Error executing synchronized edit on Telegram: {e}")
 
 # --- TELEGRAM BOT LOGIC ---
-
 async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): 
     global bridge_active, stats_tg_to_discord, stats_photos_bridged
     if not bridge_active:
@@ -396,15 +401,16 @@ async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT
     sender_name = message.from_user.first_name or message.from_user.username or "Telegram User"
     text_content = message.text or message.caption or "" 
     
+    # Construct message with Signature
     original_discord_text = f"**{sender_name}**" 
     if text_content: 
         original_discord_text += f"\n\n{text_content}" 
+    original_discord_text += f"\n{BRIDGE_SIGNATURE}"
 
     if update.edited_message:
         if message.message_id in TELEGRAM_TO_DISCORD_MAP:
             discord_msg_id = TELEGRAM_TO_DISCORD_MAP[message.message_id]
             try:
-                # Upgraded to robust fetch to prevent context loss on old caches
                 partial_msg = target_channel.get_partial_message(discord_msg_id)
                 await partial_msg.edit(content=original_discord_text)
             except Exception as e:
@@ -438,7 +444,6 @@ async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Sync initiated: Please ensure channels are manually aligned.")
 
 # --- INTEGRATED RUNNER ---
-
 async def main(): 
     global tg_bot_sender, TELEGRAM_GROUP_ID
 
@@ -480,8 +485,6 @@ async def main():
     tg_bot_sender = tg_app.bot  
     tg_app.add_handler(CommandHandler("sync", sync_command))
     
-    # FIX: Combined strict structural text/photo filter scopes.
-    # python-telegram-bot routes edits natively into MessageHandlers unless explicitly bypassed.
     tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO)
     tg_app.add_handler(MessageHandler(tg_msg_filter, telegram_receive_handler)) 
 
