@@ -26,6 +26,10 @@ DISCORD_TO_TELEGRAM_MAP = {}
 TELEGRAM_TO_DISCORD_MAP = {}
 RECENT_POSTS = set()
 
+# NEW: Track translations
+LAST_SOURCE_MSG_ID = None 
+TRANSLATION_MAP = {} # Maps original Discord ID to a list of (Channel_ID, Webhook_Message_ID)
+
 # Safe cleaning function to strip spaces or accidental quotes from tokens
 def clean_token(env_var_name):
     val = os.getenv(env_var_name)
@@ -69,7 +73,7 @@ CATEGORIES = {
         "listen_channels": parse_inline_ids("SCHEDULE_LISTEN_CHANNELS"),
         "source_channel_id": safe_int("SCHEDULE_SOURCE_CHANNEL_ID", default=0),
         "telegram_topic_id": safe_int("SCHEDULE_TELEGRAM_TOPIC_ID", default=0)
-    },    
+    },  
     "chat": {
          "listen_channels": parse_inline_ids("CHAT_LISTEN_CHANNELS"),
          "source_channel_id": safe_int("CHAT_SOURCE_CHANNEL_ID", default=0),
@@ -239,13 +243,30 @@ async def on_ready():
 
 @discord_bot.event 
 async def on_message(message): 
-    global TELEGRAM_GROUP_ID, stats_discord_to_tg, stats_photos_bridged
+    global TELEGRAM_GROUP_ID, stats_discord_to_tg, stats_photos_bridged, LAST_SOURCE_MSG_ID
     
     if not bridge_active:
         return
         
-    if message.webhook_id or message.author.bot:
+    # --- NEW: SHADOW TRACKING FOR ITRANSLATOR WEBHOOKS ---
+    if message.webhook_id:
+        if LAST_SOURCE_MSG_ID:
+            if LAST_SOURCE_MSG_ID not in TRANSLATION_MAP:
+                TRANSLATION_MAP[LAST_SOURCE_MSG_ID] = []
+            
+            TRANSLATION_MAP[LAST_SOURCE_MSG_ID].append((message.channel.id, message.id))
+            
+            if len(TRANSLATION_MAP) > MAX_MAP_SIZE:
+                oldest_key = next(iter(TRANSLATION_MAP))
+                TRANSLATION_MAP.pop(oldest_key)
+                
+        return 
+
+    if message.author.bot:
         return
+        
+    # --- TRACK THE SOURCE MESSAGE ---
+    LAST_SOURCE_MSG_ID = message.id
     
     if message.channel.id not in ALL_MONITORED_DISCORD_CHANNELS:
         return
@@ -296,6 +317,7 @@ async def on_message(message):
 
 @discord_bot.event
 async def on_raw_message_delete(payload):
+    # 1. Delete on Telegram 
     if payload.message_id in DISCORD_TO_TELEGRAM_MAP:
         mapped_data = DISCORD_TO_TELEGRAM_MAP.pop(payload.message_id)
         telegram_msg_id = mapped_data[0]
@@ -309,6 +331,21 @@ async def on_raw_message_delete(payload):
             print("--- SYNC DELETION SUCCESS --- Target message removed from Telegram topic thread.")
         except Exception as e:
             print(f"Error executing synchronized deletion loop on Telegram: {e}")
+
+    # 2. NEW: Delete the iTranslator Webhooks
+    if payload.message_id in TRANSLATION_MAP:
+        print("--- CLEANING UP TRANSLATIONS ---")
+        webhook_list = TRANSLATION_MAP.pop(payload.message_id)
+        
+        for channel_id, webhook_msg_id in webhook_list:
+            target_channel = discord_bot.get_channel(channel_id)
+            if target_channel:
+                try:
+                    msg_to_delete = target_channel.get_partial_message(webhook_msg_id)
+                    await msg_to_delete.delete()
+                    print(f"Deleted translated webhook {webhook_msg_id} in channel {channel_id}")
+                except Exception as e:
+                    print(f"Could not delete webhook: {e}")
 
 @discord_bot.event
 async def on_raw_message_edit(payload):
@@ -326,7 +363,6 @@ async def on_raw_message_edit(payload):
             else:
                 return
 
-        # Improved robust display name checks for raw event dictionaries
         display_name = author_data.get('global_name') or author_data.get('username')
         if not display_name and payload.cached_message:
             display_name = payload.cached_message.author.display_name
@@ -476,7 +512,6 @@ async def main():
 
     tg_app.add_handler(CommandHandler("sync", sync_command))
     
-    # Removed the invalid filter enum here to process text and photo updates smoothly
     tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO)
     tg_app.add_handler(MessageHandler(tg_msg_filter, telegram_receive_handler)) 
 
