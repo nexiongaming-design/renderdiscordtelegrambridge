@@ -12,21 +12,30 @@ import time
 # Web health check server imports
 from aiohttp import web
 
+# --- GLOBAL CONTROL STATE & METRICS ---
+bridge_active = True
+start_time = time.time()
+stats_discord_to_tg = 0
+stats_tg_to_discord = 0
+stats_photos_bridged = 0
+
 # Helper function for non-blocking remote control execution to avoid Systemd deadlocks
 async def run_delayed_system_command(command, delay=1.0):
     await asyncio.sleep(delay)
     os.system(command)
 
 async def handle_health(request):
-    # Get the folder where main.py is located
     base_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(base_dir, 'index.html')
     
-    async with aiofiles.open(file_path, mode='r') as f:
-        content = await f.read()
-    return web.Response(text=content, content_type='text/html')
+    try:
+        async with aiofiles.open(file_path, mode='r') as f:
+            content = await f.read()
+        return web.Response(text=content, content_type='text/html')
+    except Exception:
+        return web.Response(text="MyBridgeBot Health Check: ONLINE", content_type='text/plain')
 
-# Remote Control Endpoints (Updated to prevent system freeze hangs)
+# Remote Control Endpoints
 async def handle_restart(request):
     secret = request.query.get('secret')
     if secret == 'da55123456':
@@ -44,14 +53,12 @@ async def handle_stop(request):
 async def handle_update(request):
     secret = request.query.get('secret')
     if secret == 'da55123456':
-        # Assumes you have already set up 'git' in /home/dano/matrix-bridge/
         os.system('cd /home/dano/matrix-bridge/ && git pull')
         asyncio.create_task(run_delayed_system_command('sudo systemctl restart bot-bridge'))
         return web.Response(text="Pulling latest code and restarting...")
     return web.Response(text="Unauthorized", status=403)
 
 async def handle_logs(request):
-    # Reads the last 50 lines of the systemd journal non-blockingly and safely captures errors
     process = await asyncio.create_subprocess_shell(
         'journalctl -u bot-bridge.service -n 50 --no-pager',
         stdout=asyncio.subprocess.PIPE,
@@ -66,35 +73,120 @@ async def handle_logs(request):
     output = stdout.decode('utf-8')
     return web.Response(text=output if output.strip() else "No logs found for bot-bridge.service.")
 
+async def handle_pause(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        global bridge_active
+        bridge_active = False
+        print("⏸️ BRIDGE MANAGEMENT: Forwarding globally paused via Control Panel.")
+        return web.Response(text="Bridge has been paused.")
+    return web.Response(text="Unauthorized", status=403)
+
+async def handle_resume(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        global bridge_active
+        bridge_active = True
+        print("▶️ BRIDGE MANAGEMENT: Forwarding globally resumed via Control Panel.")
+        return web.Response(text="Bridge has been resumed.")
+    return web.Response(text="Unauthorized", status=403)
+
+async def handle_clear_cache(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        DISCORD_TO_TELEGRAM_MAP.clear()
+        TELEGRAM_TO_DISCORD_MAP.clear()
+        RECENT_POSTS.clear()
+        print("🧹 BRIDGE MANAGEMENT: Memory caches manually flushed via Control Panel.")
+        return web.Response(text="All diagnostic maps and caches cleared successfully.")
+    return web.Response(text="Unauthorized", status=403)
+
+async def handle_stats(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        uptime_seconds = int(time.time() - start_time)
+        hours, remainder = divmod(uptime_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime_str = f"{hours}h {minutes}m {seconds}s"
+        status_text = "RUNNING / ACTIVE" if bridge_active else "PAUSED / SUSPENDED"
+        
+        metrics = (
+            f"=== MYBRIDGEBOT LIFETIME METRICS ===\n"
+            f"Bridge Operational Status : {status_text}\n"
+            f"Gateway Engine Uptime    : {uptime_str}\n\n"
+            f"Discord -> Telegram Relays: {stats_discord_to_tg} messages\n"
+            f"Telegram -> Discord Relays: {stats_tg_to_discord} messages\n"
+            f"Total Binary Media Syncs  : {stats_photos_bridged} attachments\n\n"
+            f"Active Memory Lookup Map Sizes:\n"
+            f" - Forward Sync Cache     : {len(DISCORD_TO_TELEGRAM_MAP)} / {MAX_MAP_SIZE}\n"
+            f" - Reverse Sync Cache     : {len(TELEGRAM_TO_DISCORD_MAP)} / {MAX_MAP_SIZE}\n"
+            f" - Anti-Spam Anti-Echo Map: {len(RECENT_POSTS)}"
+        )
+        return web.Response(text=metrics)
+    return web.Response(text="Unauthorized", status=403)
+
+async def handle_system(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        try:
+            async with aiofiles.open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
+                content = await f.read()
+            cpu_temp = f"{float(content.strip()) / 1000:.1f}°C"
+        except Exception:
+            cpu_temp = "Unavailable (Non-Linux Environment)"
+
+        process = await asyncio.create_subprocess_shell(
+            "free -h && echo '' && echo '--- DISK RESOURCE SPACE ---' && df -h /",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await process.communicate()
+        sys_info = stdout.decode('utf-8')
+        
+        output = f"=== RASPBERRY PI HOST SYSTEM HEALTH ===\n\nSoC CPU Temperature: {cpu_temp}\n\n{sys_info}"
+        return web.Response(text=output)
+    return web.Response(text="Unauthorized", status=403)
+
+async def handle_ping(request):
+    secret = request.query.get('secret')
+    if secret == 'da55123456':
+        discord_ready = discord_bot.is_ready()
+        discord_latency = f"{round(discord_bot.latency * 1000)}ms" if discord_ready else "OFFLINE"
+        tg_ready = tg_bot_sender is not None
+        
+        output = (
+            f"=== ENDPOINT CONNECTIVITY STATUS ===\n\n"
+            f"Discord Gateway Client: {'ONLINE' if discord_ready else 'OFFLINE'}\n"
+            f"Discord WebSocket Latency: {discord_latency}\n\n"
+            f"Telegram Bot Connection: {'ONLINE' if tg_ready else 'OFFLINE'}\n"
+            f"Telegram API Gateway Target: https://api.telegram.org\n"
+        )
+        return web.Response(text=output)
+    return web.Response(text="Unauthorized", status=403)
+
 # Load secrets
 load_dotenv()
 
-# Safe cleaning function to strip spaces or accidental quotes from tokens
 def clean_token(env_var_name):
     val = os.getenv(env_var_name)
     if not val:
         return None
     return val.strip().replace('"', '').replace("'", "")
 
-# Updated defensive integer parser to clean out trailing inline comments
 def safe_int(env_var_name, default=0):
     val = os.getenv(env_var_name, "").strip()
     if not val: 
         return default
-    # Split by '#' to remove any trailing comments on the line
     val = val.split('#')[0].strip()
     try:
         return int(val)
     except ValueError:
-        print(f"⚠️ WARNING: Environment variable '{env_var_name}' is not a valid integer. Defaulting to {default}.")
         return default
 
-# Updated list parser to handle trailing inline comments safely
 def parse_inline_ids(env_var_name):
     val = os.getenv(env_var_name) 
     if not val: 
         return []
-    # Split by '#' to isolate the raw IDs from any comments
     val = val.split('#')[0].strip()
     return [int(cid.strip()) for cid in val.split(",") if cid.strip().isdigit()]
 
@@ -132,24 +224,17 @@ CATEGORIES = {
      }
 }
 
-# Compile a flat list of all monitored Discord language channels for rapid lookups
 ALL_MONITORED_DISCORD_CHANNELS = []
 for cat_data in CATEGORIES.values():
     ALL_MONITORED_DISCORD_CHANNELS.extend(cat_data["listen_channels"])
 ALL_MONITORED_DISCORD_CHANNELS = list(set(ALL_MONITORED_DISCORD_CHANNELS))
 
-# Global Telegram Sender Handler
 tg_bot_sender = None 
 TELEGRAM_GROUP_ID = 0
-
-# --- MESSAGE DELETION & EDIT SYSTEM CACHE ---
 MAX_MAP_SIZE = 10000 
 
 DISCORD_TO_TELEGRAM_MAP = {}
 TELEGRAM_TO_DISCORD_MAP = {}
-
-# Deduplication cache tracking high-speed cross-channel mirror activity
-# Format: { sender_display_name: (last_seen_channel_id, timestamp) }
 RECENT_POSTS = {}
 
 def save_message_pair(discord_id, telegram_id, is_photo=False):
@@ -164,45 +249,33 @@ def save_telegram_to_discord(telegram_id, discord_id):
         TELEGRAM_TO_DISCORD_MAP.pop(oldest_key)
     TELEGRAM_TO_DISCORD_MAP[telegram_id] = discord_id
 
-# Initialize Discord bot
 intents = discord.Intents.default() 
 intents.message_content = True 
 discord_bot = commands.Bot(command_prefix="!", intents=intents) 
 
-
-# --- DISCORD BOT LOGIC (Discord Translated Channels -> Telegram Topics) ---
-
 @discord_bot.event 
 async def on_ready(): 
-    print(f'Logged in to Discord successfully as: {discord_bot.user.name} - VERSIE 2.2') 
-    print(f'Total language channels monitored across all categories: {len(ALL_MONITORED_DISCORD_CHANNELS)}')
-    for cat_name, mapping in CATEGORIES.items():
-        print(f" -> Matrix Active [{cat_name.upper()}]: Listening to {len(mapping['listen_channels'])} channels | Routing to Topic ID: {mapping['telegram_topic_id']}")
-
+    print(f'Logged in to Discord as: {discord_bot.user.name} - VERSIE 2.3') 
 
 @discord_bot.event 
 async def on_message(message): 
-    global TELEGRAM_GROUP_ID
+    global TELEGRAM_GROUP_ID, bridge_active, stats_discord_to_tg, stats_photos_bridged
     
-    # --- LOOP & SELF-PREVENTION ---
-    # Block messages originating from this exact bot profile to prevent infinite feedback loops
-    if message.author.id == discord_bot.user.id:
+    if not bridge_active or message.author.id == discord_bot.user.id:
         return
-        
-    # --- CROSS-CHANNEL TRANSLATION GUARD ---
-    # Captures automatic translation bots (like iTranslator webhooks/bots) that instantly 
-    # broadcast duplicates across separate language channels within a tiny time window.
+
     current_time = time.time()
     sender_name = message.author.display_name
+    msg_hash = hash(message.content or "")
+    tracking_key = f"{sender_name}_{msg_hash}" if message.webhook_id else sender_name
 
-    if sender_name in RECENT_POSTS:
-        last_channel_id, last_time = RECENT_POSTS[sender_name]
-        if message.channel.id != last_channel_id and (current_time - last_time) < 3.0:
-            return  # Drop multi-channel translation spam silently
+    if tracking_key in RECENT_POSTS:
+        last_channel_id, last_time = RECENT_POSTS[tracking_key]
+        if message.channel.id == last_channel_id and (current_time - last_time) < 3.0:
+            return
 
-    RECENT_POSTS[sender_name] = (message.channel.id, current_time)
+    RECENT_POSTS[tracking_key] = (message.channel.id, current_time)
     
-    # Only process if the channel is one we monitor
     if message.channel.id not in ALL_MONITORED_DISCORD_CHANNELS:
         return
         
@@ -212,13 +285,10 @@ async def on_message(message):
 
     dynamic_content = message.content or ""
     
-    # Comprehensive Embed Parsing (Crucial for Sesh, Survey Bot, and Poll Layouts)
     if message.embeds:
         for embed in message.embeds:
-            if embed.title:
-                dynamic_content += f"\n**{embed.title}**"
-            if embed.description: 
-                dynamic_content += f"\n{embed.description}"
+            if embed.title: dynamic_content += f"\n**{embed.title}**"
+            if embed.description: dynamic_content += f"\n{embed.description}"
             if embed.fields:
                 for field in embed.fields:
                     dynamic_content += f"\n\n**{field.name}**:\n{field.value}"
@@ -234,54 +304,43 @@ async def on_message(message):
                     chat_id=TELEGRAM_GROUP_ID, 
                     photo=image_bytes, 
                     caption=formatted_text, 
-                    message_thread_id=matched_category["telegram_topic_id"] or None,
-                    parse_mode=None
+                    message_thread_id=matched_category["telegram_topic_id"] or None
                 ) 
                 save_message_pair(message.id, tg_msg.message_id, is_photo=True)
+                stats_discord_to_tg += 1
+                stats_photos_bridged += 1
                 return 
 
-        if dynamic_content: 
+        if dynamic_content.strip(): 
             tg_msg = await tg_bot_sender.send_message(
                 chat_id=TELEGRAM_GROUP_ID, 
                 text=formatted_text, 
-                message_thread_id=matched_category["telegram_topic_id"] or None,
-                parse_mode=None
+                message_thread_id=matched_category["telegram_topic_id"] or None
             ) 
             save_message_pair(message.id, tg_msg.message_id, is_photo=False)
+            stats_discord_to_tg += 1
             
     except Exception as e: 
         print(f"CRITICAL ERROR forwarding to Telegram: {e}")
-
 
 @discord_bot.event
 async def on_raw_message_delete(payload):
     if payload.message_id in DISCORD_TO_TELEGRAM_MAP:
         mapped_data = DISCORD_TO_TELEGRAM_MAP.pop(payload.message_id)
         telegram_msg_id = mapped_data[0]
-        
         try:
-            print(f"--- SYNC DELETION --- Discord message {payload.message_id} vanished. Striking from Telegram...")
-            await tg_bot_sender.delete_message(
-                chat_id=TELEGRAM_GROUP_ID,
-                message_id=telegram_msg_id
-            )
-            print("--- SYNC DELETION SUCCESS --- Target message removed from Telegram topic thread.")
+            await tg_bot_sender.delete_message(chat_id=TELEGRAM_GROUP_ID, message_id=telegram_msg_id)
         except Exception as e:
-            print(f"Error executing synchronized deletion loop on Telegram: {e}")
-
+            print(f"Error executing synchronized deletion: {e}")
 
 @discord_bot.event
 async def on_raw_message_edit(payload):
-    # Added defensive fallback to prevent crashes on webhook edits where 'author' key is None
     author_data = payload.data.get('author') or {}
-    
-    # Prevent application loop issues caused by this bot editing things
     if int(author_data.get('id', 0)) == discord_bot.user.id:
         return
 
     if payload.message_id in DISCORD_TO_TELEGRAM_MAP:
         telegram_msg_id, is_photo = DISCORD_TO_TELEGRAM_MAP[payload.message_id]
-        
         new_content = payload.data.get('content')
         
         if new_content is None:
@@ -291,11 +350,9 @@ async def on_raw_message_edit(payload):
                 return
 
         display_name = author_data.get('global_name') or author_data.get('username')
-        
         if not display_name and payload.cached_message:
             display_name = payload.cached_message.author.display_name
-        if not display_name:
-            display_name = "User"
+        display_name = display_name or "User"
 
         formatted_text = f"{display_name}:\n\n{new_content}"
 
@@ -304,7 +361,7 @@ async def on_raw_message_edit(payload):
                 await tg_bot_sender.edit_message_caption(
                     chat_id=TELEGRAM_GROUP_ID,
                     message_id=telegram_msg_id,
-                    caption=formatted_text if new_content else f"{display_name}:"
+                    caption=formatted_text
                 )
             else:
                 await tg_bot_sender.edit_message_text(
@@ -312,69 +369,70 @@ async def on_raw_message_edit(payload):
                     message_id=telegram_msg_id,
                     text=formatted_text
                 )
-            print(f"--- SYNC EDIT SUCCESS --- Updated Telegram target message ID: {telegram_msg_id}")
         except Exception as e:
-            print(f"Error executing synchronized message edit on Telegram: {e}")
+            print(f"Error executing synchronized edit on Telegram: {e}")
 
-
-# --- TELEGRAM BOT LOGIC (Telegram Topics -> Discord Source Channels) ---
+# --- TELEGRAM BOT LOGIC ---
 
 async def telegram_receive_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): 
-    message = update.effective_message 
+    global bridge_active, stats_tg_to_discord, stats_photos_bridged
+    if not bridge_active:
+        return
+
+    message = update.edited_message if update.edited_message else update.message
     
-    # --- EXTRA CHECKS ---
-    if not message or message.from_user is None:
-        return
-    if not message.text and not message.caption and not message.photo:
-        return
-    if message.from_user.is_bot:
+    if not message or message.from_user is None or message.from_user.is_bot:
         return
 
     incoming_topic_id = message.message_thread_id or 0
     matched_category = next((c for c in CATEGORIES.values() if c["telegram_topic_id"] == incoming_topic_id), None)
-    
     if not matched_category:
         return
 
-    target_source_channel_id = matched_category["source_channel_id"]
-    target_channel = discord_bot.get_channel(target_source_channel_id) 
+    target_channel = discord_bot.get_channel(matched_category["source_channel_id"]) 
     if not target_channel: 
         return 
 
-    sender_name = update.effective_user.first_name or update.effective_user.username 
+    sender_name = message.from_user.first_name or message.from_user.username or "Telegram User"
     text_content = message.text or message.caption or "" 
-    photo_content = message.photo 
-
-    byte_array = None 
-    if photo_content: 
-        photo = photo_content[-1] 
-        tg_file = await context.bot.get_file(photo.file_id) 
-        byte_array = await tg_file.download_as_bytearray() 
-
+    
     original_discord_text = f"**{sender_name}**" 
     if text_content: 
         original_discord_text += f"\n\n{text_content}" 
 
-    # --- HANDLE EDITS & NEW MESSAGES ---
-    is_edit = bool(update.edited_message)
-    if is_edit:
+    if update.edited_message:
         if message.message_id in TELEGRAM_TO_DISCORD_MAP:
             discord_msg_id = TELEGRAM_TO_DISCORD_MAP[message.message_id]
-            partial_msg = target_channel.get_partial_message(discord_msg_id)
-            await partial_msg.edit(content=original_discord_text)
+            try:
+                # Upgraded to robust fetch to prevent context loss on old caches
+                partial_msg = target_channel.get_partial_message(discord_msg_id)
+                await partial_msg.edit(content=original_discord_text)
+            except Exception as e:
+                print(f"Failed to edit Discord mirror: {e}")
         return
 
-    # --- SEND NEW ---
+    byte_array = None 
+    if message.photo: 
+        photo = message.photo[-1] 
+        tg_file = await context.bot.get_file(photo.file_id) 
+        byte_array = await tg_file.download_as_bytearray() 
+
     discord_msg = None
-    if byte_array: 
-        file_stream = io.BytesIO(byte_array) 
-        discord_file = discord.File(file_stream, filename="telegram_image.png") 
-        discord_msg = await target_channel.send(content=original_discord_text, file=discord_file) 
-    elif text_content: 
-        discord_msg = await target_channel.send(content=original_discord_text) 
+    try:
+        if byte_array: 
+            file_stream = io.BytesIO(byte_array) 
+            discord_file = discord.File(file_stream, filename="telegram_image.png") 
+            discord_msg = await target_channel.send(content=original_discord_text, file=discord_file) 
+            stats_tg_to_discord += 1
+            stats_photos_bridged += 1
+        elif text_content.strip(): 
+            discord_msg = await target_channel.send(content=original_discord_text) 
+            stats_tg_to_discord += 1
             
-    if discord_msg:
-        save_telegram_to_discord(message.message_id, discord_msg.id)
+        if discord_msg:
+            save_telegram_to_discord(message.message_id, discord_msg.id)
+    except Exception as e:
+        print(f"Error forwarding from Telegram to Discord: {e}")
 
 async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Sync initiated: Please ensure channels are manually aligned.")
@@ -382,40 +440,32 @@ async def sync_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- INTEGRATED RUNNER ---
 
 async def main(): 
-    global tg_bot_sender 
+    global tg_bot_sender, TELEGRAM_GROUP_ID
 
-    # Web Server Startup
     port = int(os.getenv("PORT", 8080))
     app = web.Application()
     app.router.add_get('/', handle_health)
-    
-    # Registering Control Panel routes
     app.router.add_get('/restart', handle_restart)
     app.router.add_get('/stop', handle_stop)
     app.router.add_get('/update', handle_update)
     app.router.add_get('/logs', handle_logs)
+    app.router.add_get('/pause', handle_pause)
+    app.router.add_get('/resume', handle_resume)
+    app.router.add_get('/clear-cache', handle_clear_cache)
+    app.router.add_get('/stats', handle_stats)
+    app.router.add_get('/system', handle_system)
+    app.router.add_get('/ping', handle_ping)
     
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port, reuse_address=True) 
     await site.start()
-    print(f"Web health check server successfully bound to port {port}")
     
-    # 1. Clean and extract tokens from the environment safely first
     discord_token = clean_token("DISCORD_TOKEN")
     telegram_token = clean_token("TELEGRAM_TOKEN")
-    global TELEGRAM_GROUP_ID
     TELEGRAM_GROUP_ID = safe_int("TELEGRAM_GROUP_ID", default=0)
-    
-    # 2. Pre-flight logging check
-    print("=== ENVIRONMENT DIAGNOSTICS ===")
-    print(f"DISCORD_TOKEN loaded? {'YES' if discord_token else 'NO'} (Length: {len(discord_token) if discord_token else 0})")
-    print(f"TELEGRAM_TOKEN loaded? {'YES' if telegram_token else 'NO'} (Length: {len(telegram_token) if telegram_token else 0})")
-    print(f"TELEGRAM_GROUP_ID: {TELEGRAM_GROUP_ID}")
-    print("===============================")
      
     if not discord_token or not telegram_token or TELEGRAM_GROUP_ID == 0:
-        print("CRITICAL: Missing core token configurations or group ID...")
         return
 
     tg_app = ( 
@@ -424,54 +474,34 @@ async def main():
         .connect_timeout(30.0) 
         .read_timeout(30.0) 
         .write_timeout(30.0) 
-        .get_updates_read_timeout(30.0) 
         .build()
     ) 
 
     tg_bot_sender = tg_app.bot  
-
-    # Handlers configureren (Schoon en foutvrij)
     tg_app.add_handler(CommandHandler("sync", sync_command))
     
-    tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO | filters.UpdateType.EDITED_MESSAGE)
+    # FIX: Combined strict structural text/photo filter scopes.
+    # python-telegram-bot routes edits natively into MessageHandlers unless explicitly bypassed.
+    tg_msg_filter = filters.Chat(TELEGRAM_GROUP_ID) & (filters.TEXT | filters.PHOTO)
     tg_app.add_handler(MessageHandler(tg_msg_filter, telegram_receive_handler)) 
 
-    print("Starting Telegram Connection Module...") 
     await tg_app.initialize() 
     await tg_app.updater.start_polling(drop_pending_updates=True) 
     await tg_app.start() 
 
-    print("Starting Discord Gateway Core Connection...") 
     try: 
         await discord_bot.start(discord_token) 
     finally: 
-        print("Shutting down bot connections gracefully...") 
-        
-        # Wrapped in isolated blocks to guarantee everything cleans up completely even if connection drops mid-flight
-        try:
-            await site.stop()
-        except Exception:
-            pass
-            
-        try:
-            await tg_app.updater.stop() 
-        except Exception:
-            pass
-            
-        try:
-            await tg_app.stop() 
-        except Exception:
-            pass
-            
-        try:
-            await tg_app.shutdown() 
-        except Exception:
-            pass
-            
-        try:
-            await discord_bot.close()
-        except Exception:
-            pass
+        try: await site.stop()
+        except Exception: pass
+        try: await tg_app.updater.stop() 
+        except Exception: pass
+        try: await tg_app.stop() 
+        except Exception: pass
+        try: await tg_app.shutdown() 
+        except Exception: pass
+        try: await discord_bot.close()
+        except Exception: pass
 
 if __name__ == '__main__': 
     try: 
