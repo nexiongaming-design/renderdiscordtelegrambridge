@@ -88,6 +88,11 @@ CATEGORIES = {
          "listen_channels": parse_inline_ids("ABSENCE_LISTEN_CHANNELS"),
          "source_channel_id": safe_int("ABSENCE_SOURCE_CHANNEL_ID", default=0),
          "telegram_topic_id": safe_int("ABSENCE_TELEGRAM_TOPIC_ID", default=0)
+     },
+     "rules": {
+         "listen_channels": parse_inline_ids("RULES_LISTEN_CHANNELS"),
+         "source_channel_id": safe_int("RULES_SOURCE_CHANNEL_ID", default=0),
+         "telegram_topic_id": safe_int("RULES_TELEGRAM_TOPIC_ID", default=0)
      }
 }
 
